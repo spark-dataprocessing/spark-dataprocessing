@@ -131,8 +131,8 @@ state.show
 |Name         |Status          |Hive Table                            |Processing Time [sec]|Defined in  |
 +-------------+----------------+--------------------------------------+---------------------+------------+
 |customer     |input           |default.tmp_sdp_ex1_customer          |2                    |            |
-|customer_male|written to cache|default.tmp_sdp_ex1_dev1_customer_male|5                    |CustomerMale|
-|count_male   |written to cache|default.tmp_sdp_ex1_dev1_count_male   |6                    |CountMale   |
+|customer_male|written to cache|default.tmp_sdp_ex1_dev2_customer_male|5                    |CustomerMale|
+|count_male   |written to cache|default.tmp_sdp_ex1_dev2_count_male   |6                    |CountMale   |
 +-------------+----------------+--------------------------------------+---------------------+------------+
 ```
 
