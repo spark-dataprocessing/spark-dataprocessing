@@ -53,64 +53,94 @@ abstract class Step(val target:String) extends BaseStep {
   }
 
 
-
-
-  def run(_state: State):State = {
-    val settings = _state.settings
-    val state = _state
-    val spark = _state.spark
-
+  def loadFromCache(state:State):State = {
     val t0 = System.nanoTime()
+    val tableName = state.settings.hivePrefix + state.uniqueTableName(target)
 
-    val tableName = settings.hivePrefix + state.uniqueTableName(target)
-    val tablePath = settings.hdfsDirectory + tableName
-
-    println("")
-    println(s"--- Step ${target} ---")
+    println(s"  Use cached data")
     println(s"  Temporary-Table:   $tableName")
-    println(s"  Temporary-Path:    $tablePath")
-    _state.show(100)
 
-    spark.sparkContext.setLocalProperty("callSite.short", target + " (pre)")
-    spark.sparkContext.setLocalProperty("callSite.long", "Class: " + getClass.getName)
+    val df = state.spark.table(tableName)
+    state.add(StateRecord(this, df, tableName, "loaded from cache", System.nanoTime() - t0))
+  }
 
-    settings.preprocess(spark)
+  def writeToCache(state:State):State = {
+    val spark = state.spark
 
-    // Check if the cached Version can be returned
-    if(settings.cacheTables && !(settings.targets contains target)) {
-      println(s"  Use cached data")
-      val tableDef = spark.sql(s"select * from $tableName")
-      return state.add(StateRecord(this, tableDef, tableName, "loaded from cache", System.nanoTime() - t0))
-    }
+    val tableName = state.settings.hivePrefix + state.uniqueTableName(target)
 
+    //get definition
+    val t0 = System.nanoTime()
+    val df = getDefinition(state)
+
+    // save table to disk
+    println(s"  Write step $target to $tableName")
+
+    spark.sparkContext.setLocalProperty("callSite.short", target)
+    df.write.
+      format("parquet").
+      mode(org.apache.spark.sql.SaveMode.Overwrite).
+      saveAsTable(tableName)
+
+    // load the saved table from cache
+    val df2 = spark.table(tableName)
+    state.add(StateRecord(this, df2, tableName, "written to cache", System.nanoTime() - t0))
+  }
+
+  def getDefinition(state:State):DataFrame = {
     // Register all the available tables as TempViews
+    state.show()
     state.activate()
 
     // Get the
-    spark.sparkContext.setLocalProperty("callSite.short", target + " (def)")
-    val tableDef:org.apache.spark.sql.DataFrame = definition(state, spark, settings)
+    state.spark.sparkContext.setLocalProperty("callSite.short", target + " (def)")
+    val tableDef:DataFrame = definition(state, state.spark)
 
 
-    spark.sparkContext.setLocalProperty("callSite.short", target + " (post)")
+    state.spark.sparkContext.setLocalProperty("callSite.short", target + " (post)")
 
-    if(settings.cacheTables || (settings.targets contains target)) {
+    tableDef
+  }
 
-      tableDef.printSchema
+  def passDefinition(state:State):State = {
+    val t0 = System.nanoTime()
+    val df = getDefinition(state)
+    state.add(StateRecord(this, df, "", "lazy", System.nanoTime() - t0))
+  }
 
-      // save table to disk
-      println(s"  Save table to HDFS...  ")
-      spark.sparkContext.setLocalProperty("callSite.short", target)
-      tableDef.write.
-        format("parquet").
-        mode(org.apache.spark.sql.SaveMode.Overwrite).
-        option("path", tablePath).
-        saveAsTable(tableName)
 
-      state.add(StateRecord(this, spark.sql(s"select * from $tableName"), tableName, "written to cache", System.nanoTime() - t0))
-    }else{
-      // TODO: Cache-Option in Config
-      tableDef.cache
-      state.add(StateRecord(this, tableDef, "", "lazy", System.nanoTime() - t0))
+  final val Execute:String = "Execute"
+  final val LoadFromCache:String = "LoadFromCache"
+  final val PassDefinition:String = "PassDefinition"
+
+
+  def getAction(state:State) = {
+    // default: PassDefinition
+    val stepsToWrite = state.settings.targets
+    val stepsToLoadFromCache = state.settings.targetsLoadCache
+
+    if(stepsToWrite.map(s => target.matches(s)).reduceOption(_||_).getOrElse(false))
+      Execute
+    else if (stepsToLoadFromCache.map(s => target.matches(s)).reduceOption(_||_).getOrElse(false))
+      LoadFromCache
+    else
+      PassDefinition
+  }
+
+  def run(state: State):State = {
+    val spark = state.spark
+
+    println(s"--- Step ${target} ---")
+    spark.sparkContext.setLocalProperty("callSite.short", target + " (pre)")
+    spark.sparkContext.setLocalProperty("callSite.long", "Class: " + getClass.getName)
+
+    val action = getAction(state)
+    println(s"Action: $action")
+
+    action match {
+      case LoadFromCache => loadFromCache(state)
+      case Execute => writeToCache(state)
+      case PassDefinition => passDefinition(state)
     }
   }
 
@@ -142,7 +172,7 @@ abstract class Step(val target:String) extends BaseStep {
     // Get the State for this step:
     val state = _state
       .getStateForStep(this)
-      .setSettings(_state.settings.setTargets().setCacheTables(false))
+      .setSettings(_state.settings.setTargets().setTargetsLoadCache(Set()))
 
     // Check the dependency on each previous step
     for (stepNameToAnalyze <- state.tableNames) {
@@ -180,7 +210,7 @@ abstract class Step(val target:String) extends BaseStep {
 
 
   // Funktion, welche die Subklasse überschreibt
-  def definition(inputDataFrames: State, spark: SparkSession, settings: DataProcessingConf):DataFrame
+  def definition(state: State, spark: SparkSession):DataFrame
 
-  def definition(state:State):DataFrame = definition(state, state.spark, state.settings)
+  def definition(state:State):DataFrame = definition(state, state.spark)
 }

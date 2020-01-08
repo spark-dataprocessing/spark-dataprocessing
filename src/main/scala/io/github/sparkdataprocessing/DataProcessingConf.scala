@@ -22,21 +22,18 @@ import org.apache.spark.sql.SparkSession
 
 import scala.collection.immutable.{Map, Set}
 
-//TODO: step entfernen: Alle Steps sollen auf alle Keys Zugrif haben. Es ist in der Verantwortung des Entwicklers,
-// ob er Namespacing zwischen den Steps mittels Konvention nutzen möchte.
 case class DataProcessingConf(
-                         name:String = "<unnamed configuration>",
-                         hdfsDirectory:String = "",
-                         hivePrefix:String = "",
-                         targets:Set[String] = Set(),
-                         preprocess: SparkSession => Unit = (x:SparkSession) => Unit,
-                         inputTables: Map[String, String] = Map(),
-                         cacheTables:Boolean = false,
-                         sparkConf:SparkConf = new SparkConf(),
-                         cleanTempViews:Boolean = true,
-                         returnStateOnException:Boolean = false,
-                         sparkLogLevel:org.apache.log4j.Level = org.apache.log4j.Level.ERROR,
-                         keyValue:Map[String, Any] = Map()
+                               name:String = "<unnamed configuration>",
+                               hivePrefix:String = "",
+                               targets:Set[String] = Set(".*"),
+                               targetsLoadCache:Set[String] = Set(),
+                               preprocess: SparkSession => Unit = (x:SparkSession) => Unit,
+                               inputTables: Map[String, String] = Map(),
+                               sparkConf:SparkConf = new SparkConf(),
+                               cleanTempViews:Boolean = true,
+                               returnStateOnException:Boolean = false,
+                               sparkLogLevel:org.apache.log4j.Level = org.apache.log4j.Level.ERROR,
+                               keyValue:Map[String, Any] = Map()
                        ) {
 
   import org.apache.spark.sql.SparkSession
@@ -48,22 +45,22 @@ case class DataProcessingConf(
   def setName(aName:String):DataProcessingConf = this.copy(name=aName)
 
 
-  def set(step:String, key:String, value:Any):DataProcessingConf =
-    this.copy(keyValue = this.keyValue + (step + "." + key -> value))
+  def set(key:String, value:Any):DataProcessingConf =
+    this.copy(keyValue = this.keyValue + (key -> value))
 
-  def get(step:String, key:String):Any = keyValue(step + "." + key )
-  def getString(step:String, key:String):String = keyValue(step + "." + key ).asInstanceOf[String]
+  def get(key:String):Any = keyValue(key)
+  def getString(key:String):String = keyValue(key).asInstanceOf[String]
 
 
-  def setHdfsDirectory(path:String):DataProcessingConf = this.copy(hdfsDirectory=path)
 
   def setHivePrefix(p:String):DataProcessingConf = this.copy(hivePrefix=p)
+  def setCleanTempViews(b:Boolean):DataProcessingConf = this.copy(cleanTempViews=b)
 
   def setPreprocess(f:SparkSession => Unit):DataProcessingConf = this.copy(preprocess=f)
 
   def setInputTables(t: Map[String, String]):DataProcessingConf = this.copy(inputTables=t)
 
-  def setCacheTables(b:Boolean):DataProcessingConf = this.copy(cacheTables=b)
+  def setTargetsLoadCache(t:Set[String]):DataProcessingConf = this.copy(targetsLoadCache=t)
 
 
   def addTarget(t:String):DataProcessingConf = this.copy(targets = this.targets + t)
@@ -72,7 +69,7 @@ case class DataProcessingConf(
   def addTargets(t:String*):DataProcessingConf = this.copy(targets = this.targets ++ t)
   def setTargets(t:Set[String] ):DataProcessingConf = this.copy(targets = t)
   def setTargets(t:String*): DataProcessingConf = copy(targets = t.toSet)
-  def setTargets(t:String): DataProcessingConf = copy(targets = targets + t)
+  def setTargets(t:String): DataProcessingConf = copy(targets = Set(t))
   def setTargets(): DataProcessingConf = copy(targets = Set())
 
 
@@ -97,11 +94,11 @@ case class DataProcessingConf(
     s""" DataPrepConf
        |   name:                    $name
        |   targets:                 ${targets.mkString(", ")}
-       |   cacheTables:             $cacheTables
+       |   cacheTables:             ${targetsLoadCache.mkString(", ")}
        |   cleanTempViews:          $cleanTempViews
        |   returnStateOnException:  $returnStateOnException
-       |   hdfsDirectory:           $hdfsDirectory
        |   hivePrefix:              $hivePrefix
+       |   keyValue:                ${keyValue.map{case(k,v) => s"$k -> $v"}.mkString(", ")}
      """.stripMargin
 
    // |   sparkConf:         ${sparkConf.toDebugString}

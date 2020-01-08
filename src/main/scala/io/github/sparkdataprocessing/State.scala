@@ -20,6 +20,7 @@ package io.github.sparkdataprocessing
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
 import scala.collection.immutable.Map
+import org.apache.commons.lang.StringUtils
 
 
 object State {
@@ -30,9 +31,72 @@ object State {
     * @param spark SparkSession
     * @return
     */
-  def apply(settings: DataProcessingConf, spark: SparkSession): State = {
-    State(Seq[Step](), Map[String, StateRecord](), Map[String, State](), settings, spark)
+
+
+  def createForInputTables(inputTables: Map[String, String], st:State = State(settings = DataProcessingConf().setCleanTempViews(false))): State = {
+
+    var state = st.setSettings(st.settings.setInputTables(st.settings.inputTables ++ inputTables))
+
+    val inputSteps = inputTables.map{ case (name, table) => new StepHiveSource(name, table)}
+
+    inputSteps.foldLeft(state)((st, s) => {
+      val t0 = System.nanoTime()
+      val tableDef = s.definition(st)
+      st.add(StateRecord(s, tableDef, s.tableName, "input", System.nanoTime() - t0))
+    })
   }
+
+
+  def createForHivePrefix(hivePrefix:String, inputTables: Map[String, String] = Map(), spark:SparkSession = SparkSession.active): State = {
+
+    val settings = DataProcessingConf()
+      .setHivePrefix(hivePrefix)
+      .setCleanTempViews(false)
+
+    val steps =
+      listTables(hivePrefix, spark)
+        .collect()
+        .map(row => {
+          val tableName = row.getAs[String]("tableName")
+          val database = row.getAs[String]("database")
+
+          val target = StringUtils.substring(tableName, hivePrefix.length - database.length - 1)
+          new StepHiveSource(target, database + "." + tableName)
+        })
+
+    val state = State.createForInputTables(inputTables, State(settings=settings, spark=spark))
+
+    steps.foldLeft(state)((s, step) => {
+      val t0 = System.nanoTime()
+      val tableDef = step.definition(s)
+      s.add(StateRecord(step, tableDef, step.tableName, "hivePrefix", System.nanoTime() - t0))
+    })
+  }
+
+
+  def dropTablesWithPrefix(hivePrefix:String, spark:SparkSession = SparkSession.active): Unit = {
+    listTables(hivePrefix,spark)
+      .collect()
+      .foreach(t => {
+        val q = s"drop table ${t.getAs[String]("database")}.${t.getAs[String]("tableName")}"
+        println(q)
+        spark.sql(q)
+      })
+  }
+
+  /** INTERNAL
+    */
+  def listTables(hivePrefix:String, spark:SparkSession): DataFrame = {
+    import spark.implicits._
+
+    val Array(database, prefix) = hivePrefix.split("\\.")
+
+    spark
+      .sqlContext
+      .tables(database)
+      .filter($"tableName".startsWith(prefix))
+  }
+
 }
 
 
@@ -42,12 +106,22 @@ object State {
   * @param dataFramesById
   * @param hiveTableById
   */
-case class State(steps: Seq[Step],
-                 stateRecordById: Map[String, StateRecord],
-                 previousStates: Map[String, State],
-                 settings: DataProcessingConf,
-                 spark: SparkSession) {
+case class State(steps: Seq[Step] = Seq(),
+                 settings: DataProcessingConf = DataProcessingConf(),
+                 stateRecordById: Map[String, StateRecord] = Map(),
+                 previousStates: Map[String, State] = Map(),
+                 spark: SparkSession = SparkSession.active) {
 
+
+  def writeDataFrame(target:String, df:DataFrame, activate:Boolean = true, show:Boolean = true):State = {
+    val step = new StepFunctional(target, _ => df)
+    val state = step.writeToCache(this)
+    if(activate)
+      state.activate(false)
+    if(show)
+      state.show()
+    state
+  }
 
 
   def add(record:StateRecord):State = copy(

@@ -21,5 +21,5 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 
 class StepFunctional(name:String, f:State => DataFrame) extends Step(name){
 
-  override def definition(state: State, spark: SparkSession, settings: DataProcessingConf): DataFrame = f(state)
+  override def definition(state: State, spark: SparkSession): DataFrame = f(state)
 }

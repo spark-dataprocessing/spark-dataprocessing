@@ -26,9 +26,9 @@ class StepHiveSource(target:String, val tableName:String) extends Step(target) {
   override def getDependency(_state:State):Dependency = Dependency(this, Seq(), _state)
 
   // Funktion, welche die Subklasse überschreibt
-  override def definition(inputDataFrames: State, spark: SparkSession, settings: DataProcessingConf):DataFrame = {
+  override def definition(inputDataFrames: State, spark: SparkSession):DataFrame = {
     println(s"StepHiveSource.definition(...)  $tableName")
-    spark.sql(s"select * from $tableName")
+    spark.table(tableName)
   }
 
   override def toString: String = {

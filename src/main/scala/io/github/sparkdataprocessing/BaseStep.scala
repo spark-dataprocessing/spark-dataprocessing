@@ -67,15 +67,9 @@ trait BaseStep {
               spark:SparkSession):State = {
 
     // Create the fist state object. All subsequent states are derived from this object.
-    var state = State(settings, spark)
+    var state = State(settings = settings, spark = spark)
+    state = State.createForInputTables(settings.inputTables, state)
 
-    // Enrich the state with the input tables:
-    val inputSteps = settings.inputTables.map{ case (name, table) => new StepHiveSource(name, table)}
-    inputSteps.foreach( s => {
-      val t0 = System.nanoTime()
-      val tableDef = s.definition(state)
-      state = state.add(StateRecord(s, tableDef, s.tableName, "input", System.nanoTime() - t0))
-    })
     state.show(50)
     println("--- Finished input data ---")
 

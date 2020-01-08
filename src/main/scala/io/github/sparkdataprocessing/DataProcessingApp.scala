@@ -19,6 +19,7 @@ package io.github.sparkdataprocessing
 
 import java.util.NoSuchElementException
 
+import org.apache.commons.lang.StringUtils
 import org.apache.log4j.Logger
 import org.apache.spark.sql.SparkSession
 
@@ -78,6 +79,7 @@ case class DataProcessingApp(appName: String, configurations: Set[DataProcessing
 
     Logger.getLogger("org").setLevel(conf.sparkLogLevel)
     Logger.getLogger("akka").setLevel(conf.sparkLogLevel)
+    Logger.getLogger("hive.metastore").setLevel(conf.sparkLogLevel)
 
     val sparkConf = conf.sparkConf
     val sparkAppName = s"$appName (${conf.name})"
@@ -94,11 +96,13 @@ case class DataProcessingApp(appName: String, configurations: Set[DataProcessing
     * @param conf Configuration
     */
   def run(conf: DataProcessingConf): State = {
-    println(conf.toString) // Log INfo
+    println(conf.toString) // Log Info
 
     val spark = createSparkSession(conf)
 
     val state = mainStep.execute(conf, spark)
+
+    state.show()
     println(s"--- DataPrepApp finished ---") // Log Info
 
     state
@@ -128,25 +132,38 @@ case class DataProcessingApp(appName: String, configurations: Set[DataProcessing
     */
   def run(args: Array[String]): State = {
 
-    import org.rogach.scallop._
 
-    class CliArgs(arguments: Seq[String]) extends ScallopConf(arguments) {
-      val configuration = opt[String](required = true)
-      val targets = trailArg[List[String]](required = false, default = Some(List[String]()))
-      verify()
+    def nextOption(map : Map[String, String], list: List[String]) : Map[String, String] = {
+      list match {
+        case Nil => map
+        case key :: value :: tail =>
+          if(key.substring(0,2) != "--") {
+            throw new IllegalArgumentException(s"Illegal argument $key")
+          }
+          nextOption(map ++ Map(StringUtils.substring(key,2) -> value), tail)
+        case key :: Nil => throw new IllegalArgumentException(s"Missing value for option $key")
+      }
     }
+    val options = nextOption(Map(), args.toList)
 
-    val a = new CliArgs(args)
 
-    println(a)
-    val confName = a.configuration.getOrElse("-")
-    val targets = a.targets.getOrElse(List("Main")).toSet
+    var conf =
+      if(options.contains("configuration"))
+        getConfiguration(options("configuration"))
+      else if(configurations.size == 1)
+        configurations.last
+      else {
+        throw new IllegalArgumentException("Missing configuration argument")
+      }
 
-    val conf =
-      getConfiguration(confName)
-        .setTargets(targets)
+    conf = options.toSeq.foldLeft(conf){case(c, (key,value)) => c.set(key,value)}
 
-    println(conf)
+    conf =
+      if(options.contains("targets"))
+        conf.setTargets(options("targets"))
+      else
+        conf
+
     run(conf)
   }
 
